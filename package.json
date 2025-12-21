@@ -1,0 +1,29 @@
+{
+  "name": "Biometric Seedless Smart Wallet-tests",
+  "version": "1.0.0",
+  "description": "Run unit tests on this project.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "test:report": "vitest run -- --coverage --costs",
+    "test:watch": "chokidar \"tests/**/*.ts\" \"contracts/**/*.clar\" -c \"npm run test:report\""
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@hirosystems/clarinet-sdk": "^3.6.0",
+    "@types/node": "^24.4.0"
+  },
+  "devDependencies": {
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
+    "@stacks/clarinet-sdk": "^3.11.0",
+    "@stacks/transactions": "^7.3.0",
+    "chokidar-cli": "^3.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vitest": "^1.6.1",
+    "vitest-environment-clarinet": "^3.0.2"
+  }
+}
