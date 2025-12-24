@@ -13,13 +13,20 @@
   "license": "ISC",
   "dependencies": {
     "@hirosystems/clarinet-sdk": "^3.6.0",
-    "@types/node": "^24.4.0"
+    "@reown/appkit": "^1.8.15",
+    "@reown/appkit-adapter-bitcoin": "^1.8.15",
+    "@reown/walletkit": "^1.4.1",
+    "@stacks/connect": "^8.2.4",
+    "@stacks/network": "^7.3.1",
+    "@types/node": "^24.4.0",
+    "@walletconnect/core": "^2.23.1",
+    "@walletconnect/utils": "^2.23.1"
   },
   "devDependencies": {
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.0.1",
     "@stacks/clarinet-sdk": "^3.11.0",
-    "@stacks/transactions": "^7.3.0",
+    "@stacks/transactions": "^7.3.1",
     "chokidar-cli": "^3.0.0",
     "typescript": "^5.9.3",
     "vite": "^5.4.21",
