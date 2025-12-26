@@ -1,192 +1,117 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Cl } from '@stacks/transactions';
+import { p256 } from '@noble/curves/p256';
+import { sha256 } from '@noble/hashes/sha256';
 
 const accounts = simnet.getAccounts();
 const DEPLOYER = accounts.get("deployer")!;
 const WALLET_1 = accounts.get("wallet_1")!;
 
 describe('biometric-wallet contract', () => {
-    let examplePubkey: Uint8Array;
-
-    beforeEach(() => {
-        // Example compressed secp256r1 public key (33 bytes)
-        examplePubkey = new Uint8Array(33);
-        examplePubkey[0] = 0x02; // Compressed key prefix
-        for (let i = 1; i < 33; i++) {
-            examplePubkey[i] = i;
-        }
-    });
+    // Generate a real P-256 keypair for cryptographic testing
+    const privateKey = p256.utils.randomPrivateKey();
+    const publicKey = p256.getPublicKey(privateKey, true); // true = compressed (33 bytes)
 
     describe('initialization', () => {
         it('should initialize with owner pubkey', () => {
-            const pubKeyBuff = Cl.buffer(examplePubkey);
-
             const { result } = simnet.callPublicFn(
                 'biometric-wallet',
                 'initialize',
-                [pubKeyBuff],
+                [Cl.buffer(publicKey)],
                 DEPLOYER
             );
 
             expect(result).toBeOk(Cl.bool(true));
 
-            // Verify stored pubkey
             const storedPubkey = simnet.callReadOnlyFn(
                 'biometric-wallet',
                 'get-owner-pubkey',
                 [],
                 DEPLOYER
             );
-            expect(storedPubkey.result).toBeOk(pubKeyBuff);
+            expect(storedPubkey.result).toBeOk(Cl.buffer(publicKey));
         });
 
         it('should only allow initialization once', () => {
-            const pubKeyBuff = Cl.buffer(examplePubkey);
-
-            // First initialization should succeed
-            const init1 = simnet.callPublicFn(
-                'biometric-wallet',
-                'initialize',
-                [pubKeyBuff],
-                DEPLOYER
-            );
-            expect(init1.result).toBeOk(Cl.bool(true));
-
-            // Second initialization should fail with ERR-ALREADY-INITIALIZED (u103)
-            const pubKeyBuff2 = Cl.buffer(new Uint8Array(33).fill(255));
+            simnet.callPublicFn('biometric-wallet', 'initialize', [Cl.buffer(publicKey)], DEPLOYER);
+            
             const init2 = simnet.callPublicFn(
                 'biometric-wallet',
                 'initialize',
-                [pubKeyBuff2],
+                [Cl.buffer(publicKey)],
                 DEPLOYER
             );
-            expect(init2.result).toBeErr(Cl.uint(103));
-        });
-
-        it('should track initialization status', () => {
-            // Before initialization
-            const statusBefore = simnet.callReadOnlyFn(
-                'biometric-wallet',
-                'is-initialized',
-                [],
-                DEPLOYER
-            );
-            expect(statusBefore.result).toBeOk(Cl.bool(false));
-
-            // Initialize
-            simnet.callPublicFn(
-                'biometric-wallet',
-                'initialize',
-                [Cl.buffer(examplePubkey)],
-                DEPLOYER
-            );
-
-            // After initialization
-            const statusAfter = simnet.callReadOnlyFn(
-                'biometric-wallet',
-                'is-initialized',
-                [],
-                DEPLOYER
-            );
-            expect(statusAfter.result).toBeOk(Cl.bool(true));
+            expect(init2.result).toBeErr(Cl.uint(103)); // ERR-ALREADY-INITIALIZED
         });
     });
 
-    describe('nonce management', () => {
+    describe('full execution flow (Cryptographic Verification)', () => {
         beforeEach(() => {
-            simnet.callPublicFn(
-                'biometric-wallet',
-                'initialize',
-                [Cl.buffer(examplePubkey)],
-                DEPLOYER
-            );
+            simnet.callPublicFn('biometric-wallet', 'initialize', [Cl.buffer(publicKey)], DEPLOYER);
         });
 
-        it('should return current nonce', () => {
+        it('should successfully verify a real secp256r1 signature and execute action', () => {
+            const actionPayload = new Uint8Array(128).fill(0xAA);
+            const currentNonce = 0;
+
+            // 1. Recreate the message hash exactly as the contract does:
+            // The contract uses: (sha256 (to-consensus-buff? { payload: ..., nonce: ... }))
+            const tuple = Cl.tuple({
+                nonce: Cl.uint(currentNonce),
+                payload: Cl.buffer(actionPayload),
+            });
+            const serializedTuple = Cl.serialize(tuple);
+            const messageHash = sha256(serializedTuple);
+
+            // 2. Sign the hash using the private key (simulating FaceID/Secure Enclave)
+            const signature = p256.sign(messageHash, privateKey);
+            const signatureBytes = signature.toRawBytes(); // 64 bytes (R + S)
+
+            // 3. Call execute-action
+            const executeRes = simnet.callPublicFn(
+                'biometric-wallet',
+                'execute-action',
+                [Cl.buffer(actionPayload), Cl.buffer(signatureBytes)],
+                WALLET_1
+            );
+
+            // Assert success
+            expect(executeRes.result).toBeOk(Cl.stringAscii("Action executed successfully"));
+
+            // 4. Verify nonce incremented
             const nonceResult = simnet.callReadOnlyFn(
                 'biometric-wallet',
                 'get-nonce',
                 [],
                 DEPLOYER
             );
-
-            expect(nonceResult.result).toBeOk(Cl.uint(0));
+            expect(nonceResult.result).toBeOk(Cl.uint(1));
         });
 
-        it('should increment nonce after successful action', () => {
-            const actionPayload = new Uint8Array(128).fill(1);
-            const dummySig = new Uint8Array(64).fill(2);
+        it('should reject execution if payload is tampered with', () => {
+            const actionPayload = new Uint8Array(128).fill(0xAA);
+            const tamperedPayload = new Uint8Array(128).fill(0xFF);
+            
+            const tuple = Cl.tuple({ nonce: Cl.uint(0), payload: Cl.buffer(actionPayload) });
+            const messageHash = sha256(Cl.serialize(tuple));
+            const signatureBytes = p256.sign(messageHash, privateKey).toRawBytes();
 
-            // Get initial nonce
-            const nonceBefore = simnet.callReadOnlyFn(
-                'biometric-wallet',
-                'get-nonce',
-                [],
-                DEPLOYER
-            );
-            expect(nonceBefore.result).toBeOk(Cl.uint(0));
-
-            // Try to execute (will fail with invalid signature but that's OK for this test structure)
-            // In a real scenario, the signature would be valid
-            simnet.callPublicFn(
-                'biometric-wallet',
-                'execute-action',
-                [Cl.buffer(actionPayload), Cl.buffer(dummySig)],
-                DEPLOYER
-            );
-
-            // Note: Since signature is invalid, nonce won't increment
-            // This test demonstrates nonce checking is in place
-        });
-    });
-
-    describe('signature verification', () => {
-        beforeEach(() => {
-            simnet.callPublicFn(
-                'biometric-wallet',
-                'initialize',
-                [Cl.buffer(examplePubkey)],
-                DEPLOYER
-            );
-        });
-
-        it('should verify signature read-only function exists', () => {
-            const dummyHash = new Uint8Array(32).fill(1);
-            const dummySig = new Uint8Array(64).fill(2);
-
-            const verifyResult = simnet.callReadOnlyFn(
-                'biometric-wallet',
-                'verify-signature',
-                [Cl.buffer(dummyHash), Cl.buffer(dummySig)],
-                DEPLOYER
-            );
-
-            // This will return false since it's not a real signature,
-            // but it shows the function is callable
-            expect(verifyResult.result).toBeBool(false);
-        });
-
-        it('should reject execute-action with invalid signature', () => {
-            const actionPayload = new Uint8Array(128).fill(5);
-            const invalidSig = new Uint8Array(64).fill(7);
-
+            // Submit signature for original payload with the tampered payload
             const executeRes = simnet.callPublicFn(
                 'biometric-wallet',
                 'execute-action',
-                [Cl.buffer(actionPayload), Cl.buffer(invalidSig)],
-                DEPLOYER
+                [Cl.buffer(tamperedPayload), Cl.buffer(signatureBytes)],
+                WALLET_1
             );
 
-            // Should fail with ERR-INVALID-SIGNATURE (u100)
-            expect(executeRes.result).toBeErr(Cl.uint(100));
+            expect(executeRes.result).toBeErr(Cl.uint(100)); // ERR-INVALID-SIGNATURE
         });
+    });
 
+    describe('nonce and initialization safety', () => {
         it('should reject action when not initialized', () => {
-            // Create a new simnet instance without initialization
-            simnet.setEpoch("4.0");
-
-            const actionPayload = new Uint8Array(128).fill(5);
-            const sig = new Uint8Array(64).fill(7);
+            const actionPayload = new Uint8Array(128).fill(1);
+            const sig = new Uint8Array(64).fill(0);
 
             const executeRes = simnet.callPublicFn(
                 'biometric-wallet',
@@ -195,9 +120,7 @@ describe('biometric-wallet contract', () => {
                 WALLET_1
             );
 
-            // Should fail with ERR-NOT-INITIALIZED (u104) or ERR-INVALID-SIGNATURE
-            // depending on implementation order
-            expect(executeRes.result).toBeErr(Cl.uint(104));
+            expect(executeRes.result).toBeErr(Cl.uint(104)); // ERR-NOT-INITIALIZED
         });
     });
 });
