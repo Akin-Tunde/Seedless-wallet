@@ -22,7 +22,6 @@ This project demonstrates how to build a **non-custodial wallet** where transact
 - [Clarinet](https://github.com/hirosystems/clarinet) v3.8.1 or higher
 - Node.js v18+ and npm
 - Basic understanding of Clarity smart contracts
-
 ## 🛠️ Installation
 
 ```bash
